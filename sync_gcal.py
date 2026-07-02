@@ -28,6 +28,12 @@ import lol_sources as src
 
 DEFAULT_FAVORITES = "T1, HLE, GEN, KT, GAM, TSW"
 
+# Lọc giải: giải quốc tế (tier 'intl') luôn có; FULL_LEAGUES có mọi trận;
+# LATE_ONLY chỉ lấy trận playoff/cuối mùa; còn lại (Prime League, LRS...) bỏ.
+# Chỉnh bằng repo Variable LOL_LEAGUES / LOL_LATE_ONLY nếu muốn.
+FULL_LEAGUES_DEFAULT = "LCK, LCP"
+LATE_ONLY_DEFAULT = "LPL, LEC"
+
 # league (normalized) -> tier
 LEAGUE_TIER = {
     "lck": "lck", "lpl": "lpl", "lec": "lec", "lcp": "lcp",
@@ -62,12 +68,17 @@ def norm(s):
     return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 
+def lkey(s):
+    """Khoá so khớp tên giải: bỏ luôn chữ số để 'Esports World Cup 2026' == 'esportsworldcup'."""
+    return re.sub(r"\d", "", norm(s))
+
+
 def league_short(name):
-    return LEAGUE_SHORT.get(norm(name), name)
+    return LEAGUE_SHORT.get(lkey(name), name)
 
 
 def tier_of(league):
-    return LEAGUE_TIER.get(norm(league), "other")
+    return LEAGUE_TIER.get(lkey(league), "other")
 
 
 def is_playoff(m):
@@ -85,6 +96,18 @@ def color_of(m, favs):
     if is_fav(m, favs) or is_playoff(m):
         return HOT_COLOR
     return TIER_COLOR[tier_of(m["league"])]
+
+
+def keep_match(m, full, late_only):
+    """Giữ giải quốc tế + FULL_LEAGUES (mọi trận) + LATE_ONLY (chỉ playoff)."""
+    if tier_of(m["league"]) == "intl":
+        return True
+    nl = lkey(m["league"])
+    if nl in full:
+        return True
+    if nl in late_only:
+        return is_playoff(m)
+    return False
 
 
 def event_id(m):
@@ -161,6 +184,30 @@ def upsert(svc, cal_id, m, favs, dry=False):
         raise
 
 
+def purge(svc, cal_id, keep_ids):
+    """Xoá event của app (id bắt đầu 'lol') không còn trong danh sách đã lọc — dọn rác."""
+    now = datetime.now(timezone.utc)
+    tmin = (now - timedelta(days=30)).isoformat()
+    tmax = (now + timedelta(days=90)).isoformat()
+    deleted, page = 0, None
+    while True:
+        resp = svc.events().list(calendarId=cal_id, timeMin=tmin, timeMax=tmax,
+                                  maxResults=2500, singleEvents=True, showDeleted=False,
+                                  pageToken=page).execute()
+        for ev in resp.get("items", []):
+            eid = ev.get("id", "")
+            if eid.startswith("lol") and eid not in keep_ids:
+                try:
+                    svc.events().delete(calendarId=cal_id, eventId=eid).execute()
+                    deleted += 1
+                except Exception:  # noqa
+                    pass
+        page = resp.get("nextPageToken")
+        if not page:
+            break
+    return deleted
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -170,6 +217,9 @@ def main():
     args = ap.parse_args()
 
     matches = src.fetch_all(include_extra=not args.no_extra)
+    full = {lkey(x) for x in os.environ.get("LOL_LEAGUES", FULL_LEAGUES_DEFAULT).split(",") if x.strip()}
+    late = {lkey(x) for x in os.environ.get("LOL_LATE_ONLY", LATE_ONLY_DEFAULT).split(",") if x.strip()}
+    matches = [m for m in matches if keep_match(m, full, late)]
 
     if args.check_active:
         now = datetime.now(timezone.utc)
@@ -181,11 +231,14 @@ def main():
     favs = {norm(t) for t in os.environ.get("FAVORITE_TEAMS", DEFAULT_FAVORITES).split(",") if t.strip()}
     print(f"matches: {len(matches)} | favorites: {sorted(favs)}")
     svc = None if args.dry_run else gcal_service()
-    cal_id = os.environ.get("GCAL_ID", "DRY")
-    stats = {}
+    cal_id = os.environ.get("GCAL_ID", "DRY").strip()   # bỏ newline/space thừa từ secret
+    stats, keep = {}, set()
     for m in matches:
         res = upsert(svc, cal_id, m, favs, dry=args.dry_run)
         stats[res] = stats.get(res, 0) + 1
+        keep.add(event_id(m))
+    if svc and not args.dry_run:
+        print("purged (rác/quá cũ):", purge(svc, cal_id, keep))
     print("done:", stats)
 
 
