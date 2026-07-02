@@ -149,39 +149,72 @@ def gcal_service():
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+BO_HOURS = {1: 1, 3: 3, 5: 5}   # Bo1→1h, Bo3→3h, Bo5→5h
+
+
+def _parse_start(ex):
+    dt = (ex or {}).get("start", {}).get("dateTime")
+    if not dt:
+        return None
+    try:
+        d = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        return d.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 def upsert(svc, cal_id, m, favs, dry=False):
     summary, desc = render(m)
+    eid = event_id(m)
+    color = color_of(m, favs)
+    dur = BO_HOURS.get(m.get("bo") or 0, 3)
+
+    # đọc event cũ trước (để ghim giờ + so đổi)
+    ex = None
+    if not dry:
+        from googleapiclient.errors import HttpError
+        try:
+            ex = svc.events().get(calendarId=cal_id, eventId=eid).execute()
+            if ex.get("status") == "cancelled":
+                ex = None
+        except HttpError as e:
+            if e.resp.status != 404:
+                raise
+            ex = None
+
+    # Giờ bắt đầu: không bao giờ trôi MUỘN hơn giá trị đã lưu; nếu đang đá mà
+    # thực tế sớm hơn lịch thì đôn lên 'now' (ghim giờ sớm nhất đã thấy).
     start = m["utc"]
-    # BoX matches can run long; give a generous 3h block as a marker.
+    ex_start = _parse_start(ex)
+    if ex_start:
+        start = min(start, ex_start)
+    if m["state"] == "inProgress":
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        start = min(start, now)
+
     body = {
-        "id": event_id(m),
+        "id": eid,
         "summary": summary,
         "description": desc.replace("\\n", "\n"),
         "start": {"dateTime": start.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Etc/UTC"},
-        "end": {"dateTime": (start + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S"),
+        "end": {"dateTime": (start + timedelta(hours=dur)).strftime("%Y-%m-%dT%H:%M:%S"),
                 "timeZone": "Etc/UTC"},
-        "colorId": color_of(m, favs),
+        "colorId": color,
         "reminders": {"useDefault": True, "overrides": []},
     }
     if dry:
-        print(f"[dry] {body['summary']:44} color={body['colorId']:>2} {start:%Y-%m-%d %H:%MZ}")
+        print(f"[dry] {summary:44} color={color:>2} Bo{m.get('bo')} {dur}h {start:%m-%d %H:%MZ}")
         return "dry"
-    from googleapiclient.errors import HttpError
-    try:
-        ex = svc.events().get(calendarId=cal_id, eventId=body["id"]).execute()
-        if ex.get("status") == "cancelled":
-            svc.events().insert(calendarId=cal_id, body=body).execute(); return "reinsert"
-        changed = any(ex.get(k) != body[k] for k in ("summary", "colorId", "description")) \
-            or (ex.get("start", {}).get("dateTime", "")[:16] != body["start"]["dateTime"][:16])
-        if changed:
-            svc.events().patch(calendarId=cal_id, eventId=body["id"], body=body).execute()
-            return "update"
-        return "nochange"
-    except HttpError as e:
-        if e.resp.status == 404:
-            svc.events().insert(calendarId=cal_id, body=body).execute()
-            return "insert"
-        raise
+    if ex is None:
+        svc.events().insert(calendarId=cal_id, body=body).execute()
+        return "insert"
+    changed = any(ex.get(k) != body[k] for k in ("summary", "colorId", "description")) \
+        or ex.get("start", {}).get("dateTime", "")[:16] != body["start"]["dateTime"][:16] \
+        or ex.get("end", {}).get("dateTime", "")[:16] != body["end"]["dateTime"][:16]
+    if changed:
+        svc.events().patch(calendarId=cal_id, eventId=eid, body=body).execute()
+        return "update"
+    return "nochange"
 
 
 def purge(svc, cal_id, keep_ids):
