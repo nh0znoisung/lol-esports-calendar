@@ -1,0 +1,56 @@
+name: Sync LoL Esports to Google Calendar
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # watchdog (GitHub cron is best-effort); real 5-min cadence = self-loop
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write            # để tự kích hoạt lại (giữ vòng lặp 5 phút)
+
+concurrency:
+  group: sync-lol
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GCAL_ID: ${{ secrets.GCAL_ID }}
+      GOOGLE_SA_KEY: ${{ secrets.GOOGLE_SA_KEY }}
+      FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
+      LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}   # optional: Leaguepedia OverviewPage names
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests google-api-python-client google-auth
+
+      - name: Warn if secrets missing
+        if: ${{ env.GCAL_ID == '' || env.GOOGLE_SA_KEY == '' }}
+        run: echo "::warning::GCAL_ID / GOOGLE_SA_KEY chưa cấu hình — bỏ qua sync. Xem README."
+
+      - name: Sync loop (5-min cadence while matches are near)
+        if: ${{ env.GCAL_ID != '' && env.GOOGLE_SA_KEY != '' }}
+        run: |
+          for i in $(seq 1 12); do
+            python sync_gcal.py || true
+            if ! python sync_gcal.py --check-active; then
+              echo "Không có trận nào gần giờ — thoát vòng lặp."; exit 0
+            fi
+            echo "Trong khung giờ trận — chờ 5 phút (lần $i/12)."
+            sleep 300
+          done
+
+      - name: Keep the loop alive
+        if: ${{ env.GCAL_ID != '' && env.GOOGLE_SA_KEY != '' }}
+        run: |
+          if python sync_gcal.py --check-active; then
+            gh workflow run "${GITHUB_WORKFLOW}" --ref main || true
+          fi
