@@ -59,17 +59,19 @@ def _q(items):
 
 def discover_pages(year, leagues):
     """Return {OverviewPage: League} for tournaments of the given year+leagues."""
+    where = f"T.Year='{year}' AND T.League IN ({_q(leagues)})"
     try:
         rows = _cargo({
             "tables": "Tournaments=T",
             "fields": "T.OverviewPage=page,T.League=league",
-            "where": f"T.Year='{year}' AND T.League IN ({_q(leagues)})",
-            "limit": "500",
+            "where": where, "limit": "500",
         })
     except Exception as e:  # noqa
-        print(f"WARN: Leaguepedia discover failed ({e})")
+        print(f"WARN: discover failed: {e} | where={where}")
         return {}
-    return {r["page"]: (r.get("league") or r["page"]) for r in rows if r.get("page")}
+    pages = {r["page"]: (r.get("league") or r["page"]) for r in rows if r.get("page")}
+    print(f"discover: {len(pages)} tournaments for {year} | sample: {list(pages)[:5]}")
+    return pages
 
 
 def _row_to_match(t, page_league):
@@ -86,7 +88,7 @@ def _row_to_match(t, page_league):
     return {
         "id": t.get("mid") or f"{op}|{t1}|{t2}|{t.get('dt')}",
         "league": page_league.get(op, op), "tournament": op,
-        "block": (t.get("rnd") or t.get("tab") or "").strip(),
+        "block": (t.get("tab") or "").strip(),
         "utc": utc, "state": state,
         "bo": int(t["bo"]) if str(t.get("bo", "")).isdigit() else None,
         "a": {"code": t1, "name": t1, "wins": int(s1) if str(s1).isdigit() else None,
@@ -109,7 +111,7 @@ def fetch_leaguepedia_season(year=None, leagues=None):
             page_league.setdefault(p, p)
     pages = list(page_league)
     fields = ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,MS.Team1Score=s1,"
-              "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,MS.Round=rnd,"
+              "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,"
               "MS.OverviewPage=op,MS.MatchId=mid")
     out = []
     for i in range(0, len(pages), 8):          # batch pages to keep queries small
@@ -123,7 +125,7 @@ def fetch_leaguepedia_season(year=None, leagues=None):
                     "order_by": "MS.DateTime_UTC", "limit": "500", "offset": str(offset),
                 })
             except Exception as e:  # noqa
-                print(f"WARN: Leaguepedia MatchSchedule batch failed ({e})")
+                print(f"WARN: MatchSchedule batch failed: {e}")
                 break
             for t in rows:
                 m = _row_to_match(t, page_league)
@@ -132,6 +134,7 @@ def fetch_leaguepedia_season(year=None, leagues=None):
             if len(rows) < 500:
                 break
             offset += 500
+    print(f"leaguepedia: {len(out)} matches from {len(pages)} tournaments")
     return out
 
 
