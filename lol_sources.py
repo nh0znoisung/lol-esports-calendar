@@ -14,9 +14,36 @@ Everything is normalized to a common match dict:
   {id, league, tournament, block(round), utc, state, bo, a{code,name,wins,outcome}, b{...}, source}
 """
 import os
+import time
 from datetime import datetime, timezone
 
 import requests
+
+_SESSION = None
+
+
+def _session():
+    """Requests session, logged in with a Fandom bot password if provided
+    (LEAGUEPEDIA_USER / LEAGUEPEDIA_PASS) — gives a much higher rate limit."""
+    global _SESSION
+    if _SESSION is not None:
+        return _SESSION
+    s = requests.Session()
+    s.headers.update(UA)
+    user, pw = os.environ.get("LEAGUEPEDIA_USER"), os.environ.get("LEAGUEPEDIA_PASS")
+    if user and pw:
+        try:
+            tok = s.get(LEAGUEPEDIA_API, params={
+                "action": "query", "meta": "tokens", "type": "login", "format": "json"},
+                timeout=30).json()["query"]["tokens"]["logintoken"]
+            res = s.post(LEAGUEPEDIA_API, data={
+                "action": "login", "lgname": user, "lgpassword": pw,
+                "lgtoken": tok, "format": "json"}, timeout=30).json()
+            print("leaguepedia login:", res.get("login", {}).get("result"))
+        except Exception as e:  # noqa
+            print(f"WARN: leaguepedia login failed ({e})")
+    _SESSION = s
+    return s
 
 LEAGUEPEDIA_API = "https://lol.fandom.com/api.php"
 UA = {"User-Agent": "lol-esports-calendar/1.0"}
@@ -45,15 +72,23 @@ def _dt(s):
         return None
 
 
-def _cargo(params):
-    r = requests.get(LEAGUEPEDIA_API,
-                     params={**params, "action": "cargoquery", "format": "json"},
-                     timeout=30, headers=UA)
-    r.raise_for_status()
-    j = r.json()
-    if "error" in j:   # Cargo trả lỗi kèm HTTP 200 -> phải tự bắt
-        raise RuntimeError(j["error"].get("info", str(j["error"])))
-    return [row.get("title", {}) for row in j.get("cargoquery", [])]
+def _cargo(params, _tries=3):
+    s = _session()
+    q = {**params, "action": "cargoquery", "format": "json", "maxlag": "5"}
+    for attempt in range(_tries):
+        r = s.get(LEAGUEPEDIA_API, params=q, timeout=30)
+        r.raise_for_status()
+        j = r.json()
+        err = j.get("error", {})
+        code = err.get("code", "")
+        if code in ("ratelimited", "maxlag"):     # đợi rồi thử lại
+            time.sleep(5 * (attempt + 1))
+            continue
+        if err:
+            raise RuntimeError(err.get("info", str(err)))
+        time.sleep(1)                              # nhẹ tay giữa các request
+        return [row.get("title", {}) for row in j.get("cargoquery", [])]
+    raise RuntimeError("rate limited (hết số lần thử) — cân nhắc thêm LEAGUEPEDIA_USER/PASS")
 
 
 def _q(items):
@@ -117,8 +152,8 @@ def fetch_leaguepedia_season(year=None, leagues=None):
               "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,"
               "MS.OverviewPage=op,MS.MatchId=mid")
     out = []
-    for i in range(0, len(pages), 8):          # batch pages to keep queries small
-        batch = pages[i:i + 8]
+    for i in range(0, len(pages), 20):         # batch pages -> ít request (né rate limit)
+        batch = pages[i:i + 20]
         offset = 0
         while True:
             try:

@@ -2,14 +2,13 @@ name: Sync LoL Esports to Google Calendar
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # watchdog (GitHub cron is best-effort); real 5-min cadence = self-loop
+    - cron: "17 * * * *"     # mỗi giờ (Leaguepedia không real-time + có rate limit)
   workflow_dispatch: {}
   push:
     branches: [main]
 
 permissions:
   contents: read
-  actions: write            # để tự kích hoạt lại (giữ vòng lặp 5 phút)
 
 concurrency:
   group: sync-lol
@@ -21,9 +20,13 @@ jobs:
     env:
       GCAL_ID: ${{ secrets.GCAL_ID }}
       GOOGLE_SA_KEY: ${{ secrets.GOOGLE_SA_KEY }}
+      LEAGUEPEDIA_USER: ${{ secrets.LEAGUEPEDIA_USER }}   # tùy chọn: bot password -> rate limit cao hơn
+      LEAGUEPEDIA_PASS: ${{ secrets.LEAGUEPEDIA_PASS }}
       FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
-      LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}   # optional: Leaguepedia OverviewPage names
-      GH_TOKEN: ${{ github.token }}
+      LOL_YEAR: ${{ vars.LOL_YEAR }}
+      LOL_LEAGUES: ${{ vars.LOL_LEAGUES }}
+      LOL_LATE_ONLY: ${{ vars.LOL_LATE_ONLY }}
+      LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,26 +34,9 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install requests google-api-python-client google-auth
-
       - name: Warn if secrets missing
         if: ${{ env.GCAL_ID == '' || env.GOOGLE_SA_KEY == '' }}
         run: echo "::warning::GCAL_ID / GOOGLE_SA_KEY chưa cấu hình — bỏ qua sync. Xem README."
-
-      - name: Sync loop (5-min cadence while matches are near)
+      - name: Sync to Google Calendar
         if: ${{ env.GCAL_ID != '' && env.GOOGLE_SA_KEY != '' }}
-        run: |
-          for i in $(seq 1 12); do
-            python sync_gcal.py || true
-            if ! python sync_gcal.py --check-active; then
-              echo "Không có trận nào gần giờ — thoát vòng lặp."; exit 0
-            fi
-            echo "Trong khung giờ trận — chờ 5 phút (lần $i/12)."
-            sleep 300
-          done
-
-      - name: Keep the loop alive
-        if: ${{ env.GCAL_ID != '' && env.GOOGLE_SA_KEY != '' }}
-        run: |
-          if python sync_gcal.py --check-active; then
-            gh workflow run "${GITHUB_WORKFLOW}" --ref main || true
-          fi
+        run: python sync_gcal.py
