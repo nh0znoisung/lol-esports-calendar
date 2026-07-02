@@ -50,7 +50,10 @@ def _cargo(params):
                      params={**params, "action": "cargoquery", "format": "json"},
                      timeout=30, headers=UA)
     r.raise_for_status()
-    return [row.get("title", {}) for row in r.json().get("cargoquery", [])]
+    j = r.json()
+    if "error" in j:   # Cargo trả lỗi kèm HTTP 200 -> phải tự bắt
+        raise RuntimeError(j["error"].get("info", str(j["error"])))
+    return [row.get("title", {}) for row in j.get("cargoquery", [])]
 
 
 def _q(items):
