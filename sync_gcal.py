@@ -267,8 +267,8 @@ def main():
     args = ap.parse_args()
 
     matches = src.fetch_all(include_extra=not args.no_extra)
-    full = {lkey(x) for x in os.environ.get("LOL_LEAGUES", FULL_LEAGUES_DEFAULT).split(",") if x.strip()}
-    late = {lkey(x) for x in os.environ.get("LOL_LATE_ONLY", LATE_ONLY_DEFAULT).split(",") if x.strip()}
+    full = {lkey(x) for x in (os.environ.get("LOL_FULL_LEAGUES") or FULL_LEAGUES_DEFAULT).split(",") if x.strip()}
+    late = {lkey(x) for x in (os.environ.get("LOL_LATE_ONLY") or LATE_ONLY_DEFAULT).split(",") if x.strip()}
     matches = [m for m in matches if keep_match(m, full, late)]
     # cửa sổ cuốn chiếu: chỉ đồng bộ trận gần đây + sắp tới (khỏi ghi lại cả năm mỗi 5')
     now = datetime.now(timezone.utc)
@@ -282,10 +282,10 @@ def main():
         print(f"{'active' if (live or near) else 'idle'} (live={live}, near={near})")
         sys.exit(0 if (live or near) else 1)
 
-    favs = {norm(t) for t in os.environ.get("FAVORITE_TEAMS", DEFAULT_FAVORITES).split(",") if t.strip()}
+    favs = {norm(t) for t in (os.environ.get("FAVORITE_TEAMS") or DEFAULT_FAVORITES).split(",") if t.strip()}
     print(f"matches: {len(matches)} | favorites: {sorted(favs)}")
     svc = None if args.dry_run else gcal_service()
-    cal_id = os.environ.get("GCAL_ID", "DRY").strip()   # bỏ newline/space thừa từ secret
+    cal_id = (os.environ.get("GCAL_ID") or "DRY").strip()   # bỏ newline/space thừa từ secret
     stats, keep = {}, set()
     for m in matches:
         res = upsert(svc, cal_id, m, favs, dry=args.dry_run)

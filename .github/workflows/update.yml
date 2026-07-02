@@ -25,6 +25,7 @@ jobs:
       FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
       LOL_YEAR: ${{ vars.LOL_YEAR }}
       LOL_LEAGUES: ${{ vars.LOL_LEAGUES }}
+      LOL_FULL_LEAGUES: ${{ vars.LOL_FULL_LEAGUES }}
       LOL_LATE_ONLY: ${{ vars.LOL_LATE_ONLY }}
       LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}
     steps:

@@ -138,9 +138,9 @@ def _row_to_match(t, page_league):
 
 
 def fetch_leaguepedia_season(year=None, leagues=None):
-    year = year or os.environ.get("LOL_YEAR", YEAR_DEFAULT)
+    year = year or os.environ.get("LOL_YEAR") or YEAR_DEFAULT
     leagues = leagues or [x.strip() for x in
-                          os.environ.get("LOL_LEAGUES", LEAGUES_DEFAULT).split(",") if x.strip()]
+                          (os.environ.get("LOL_LEAGUES") or LEAGUES_DEFAULT).split(",") if x.strip()]
     page_league = discover_pages(year, leagues)
     # allow manual extra OverviewPages (comma-separated)
     for p in os.environ.get("LOL_EXTRA_PAGES", "").split(","):
