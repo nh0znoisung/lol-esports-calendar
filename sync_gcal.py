@@ -37,7 +37,8 @@ LATE_ONLY_DEFAULT = "LPL, LEC"
 # league (normalized) -> tier
 LEAGUE_TIER = {
     "lck": "lck", "lpl": "lpl", "lec": "lec", "lcp": "lcp",
-    "msi": "intl", "worlds": "intl", "worldchampionship": "intl", "firststand": "intl",
+    "msi": "intl", "midseasoninvitational": "intl", "worlds": "intl",
+    "worldchampionship": "intl", "firststand": "intl",
     "esportsworldcup": "intl", "ewc": "intl", "nationscup": "intl",
     "asiangames": "intl", "kespacup": "intl",
 }
@@ -52,6 +53,7 @@ TIER_COLOR = {
 HOT_COLOR = "11"   # Tomato — playoff/final/seeding OR favorite team
 
 LEAGUE_SHORT = {
+    "midseasoninvitational": "MSI", "msi": "MSI",
     "worldchampionship": "Worlds", "worlds": "Worlds", "esportsworldcup": "EWC",
     "firststand": "First Stand", "asiangames": "Asiad", "nationscup": "Nations Cup",
     "kespacup": "KeSPA",
@@ -95,11 +97,14 @@ def is_fav(m, favs):
 def color_of(m, favs):
     if is_fav(m, favs) or is_playoff(m):
         return HOT_COLOR
-    return TIER_COLOR[tier_of(m["league"])]
+    t = tier_of(m["league"])
+    if t == "other" and m.get("source") == "leaguepedia":
+        t = "intl"   # giải Leaguepedia opt-in coi như quốc tế
+    return TIER_COLOR[t]
 
 
 def keep_match(m, full, late_only):
-    """Giữ giải quốc tế + FULL_LEAGUES (mọi trận) + LATE_ONLY (chỉ playoff)."""
+    """Giữ: quốc tế (MSI/Worlds/EWC/Asiad...) + FULL_LEAGUES (mọi trận) + LATE_ONLY (chỉ playoff)."""
     if tier_of(m["league"]) == "intl":
         return True
     nl = lkey(m["league"])
@@ -152,8 +157,8 @@ def gcal_service():
 BO_HOURS = {1: 1, 3: 3, 5: 5}   # Bo1→1h, Bo3→3h, Bo5→5h
 
 
-def _parse_start(ex):
-    dt = (ex or {}).get("start", {}).get("dateTime")
+def _parse_dt(ex, key):
+    dt = (ex or {}).get(key, {}).get("dateTime")
     if not dt:
         return None
     try:
@@ -185,19 +190,31 @@ def upsert(svc, cal_id, m, favs, dry=False):
     # Giờ bắt đầu: không bao giờ trôi MUỘN hơn giá trị đã lưu; nếu đang đá mà
     # thực tế sớm hơn lịch thì đôn lên 'now' (ghim giờ sớm nhất đã thấy).
     start = m["utc"]
-    ex_start = _parse_start(ex)
+    ex_start = _parse_dt(ex, "start")
     if ex_start:
         start = min(start, ex_start)
     if m["state"] == "inProgress":
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         start = min(start, now)
 
+    # Kết thúc: mặc định start + khối Bo. Khi trận đã XONG mà thực tế kết thúc
+    # sớm hơn khối → co end lại (ghim giờ kết thúc sớm nhất, không phình lại).
+    end = start + timedelta(hours=dur)
+    if m["state"] == "completed":
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        end = min(end, now)
+        ex_end = _parse_dt(ex, "end")
+        if ex_end:
+            end = min(end, ex_end)
+    if end <= start:
+        end = start + timedelta(minutes=30)
+
     body = {
         "id": eid,
         "summary": summary,
         "description": desc.replace("\\n", "\n"),
         "start": {"dateTime": start.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "Etc/UTC"},
-        "end": {"dateTime": (start + timedelta(hours=dur)).strftime("%Y-%m-%dT%H:%M:%S"),
+        "end": {"dateTime": end.strftime("%Y-%m-%dT%H:%M:%S"),
                 "timeZone": "Etc/UTC"},
         "colorId": color,
         "reminders": {"useDefault": True, "overrides": []},
@@ -253,6 +270,10 @@ def main():
     full = {lkey(x) for x in os.environ.get("LOL_LEAGUES", FULL_LEAGUES_DEFAULT).split(",") if x.strip()}
     late = {lkey(x) for x in os.environ.get("LOL_LATE_ONLY", LATE_ONLY_DEFAULT).split(",") if x.strip()}
     matches = [m for m in matches if keep_match(m, full, late)]
+    # cửa sổ cuốn chiếu: chỉ đồng bộ trận gần đây + sắp tới (khỏi ghi lại cả năm mỗi 5')
+    now = datetime.now(timezone.utc)
+    lo, hi = now - timedelta(days=30), now + timedelta(days=90)
+    matches = [m for m in matches if lo <= m["utc"] <= hi]
 
     if args.check_active:
         now = datetime.now(timezone.utc)

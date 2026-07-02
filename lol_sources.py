@@ -2,40 +2,42 @@
 """
 Data sources for the LoL esports calendar.
 
-Primary : lolesports unofficial API (getSchedule) — Riot leagues (LCK, LPL, LEC,
-          LCP, MSI, Worlds, First Stand, EWC if listed). One GET, gives state
-          (unstarted/inProgress/completed) + series score (gameWins) + blockName.
+Primary : Leaguepedia (lol.fandom.com) Cargo API — covers the WHOLE 2026 season
+          across every league/event (LCK, LCP, LPL, LEC, MSI, Worlds, EWC, Asian
+          Games, KeSPA Cup, Nations Cup, First Stand ...), including future/TBD
+          bracket matches and round names. Auto-discovers tournaments by Year +
+          League, then pulls their MatchSchedule (plain GET, no key).
+Future  : lolesports API (getSchedule) — kept for a live-state overlay later.
           Needs the public x-api-key header (a well-known constant, not a secret).
-Extra   : Leaguepedia (lol.fandom.com) Cargo API — non-Riot events that lolesports
-          usually lacks (KeSPA Cup, Asian Games, Nations Cup). Best-effort: any
-          failure/timeout is swallowed so the primary source still syncs.
 
-Both are normalized to a common match dict (see `to_match`).
+Everything is normalized to a common match dict:
+  {id, league, tournament, block(round), utc, state, bo, a{code,name,wins,outcome}, b{...}, source}
 """
 import os
 from datetime import datetime, timezone
 
 import requests
 
-LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"  # public API key used by lolesports.com
-SCHEDULE_URL = "https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US"
-HEADERS = {"x-api-key": LOLESPORTS_KEY, "User-Agent": "lol-esports-calendar/1.0"}
-
 LEAGUEPEDIA_API = "https://lol.fandom.com/api.php"
-# Extra tournaments to pull from Leaguepedia (OverviewPage names). Override via
-# env LOL_EXTRA_PAGES (comma-separated). Names must match Leaguepedia exactly.
-DEFAULT_EXTRA_PAGES = [
-    "Esports World Cup 2026",
-    "2026 Asian Games",
-    "KeSPA Cup 2026",
-    "Nations Cup 2026",
-]
+UA = {"User-Agent": "lol-esports-calendar/1.0"}
+
+YEAR_DEFAULT = "2026"
+# Leaguepedia "League" values to include. LCK/LCP full; LPL/LEC discovered too
+# but filtered to playoffs downstream; the rest are international events.
+LEAGUES_DEFAULT = ("LCK, LCP, LPL, LEC, First Stand, Mid-Season Invitational, "
+                   "World Championship, Esports World Cup, Asian Games, "
+                   "KeSPA Cup, Nations Cup")
+
+# --- lolesports (future live overlay) -------------------------------------
+LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
+SCHEDULE_URL = "https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US"
 
 
 def _dt(s):
     if not s:
         return None
-    s = s.replace("Z", "+00:00").replace(" ", "T", 1) if "T" not in s else s.replace("Z", "+00:00")
+    s = s.strip().replace(" ", "T", 1) if "T" not in s else s
+    s = s.replace("Z", "+00:00")
     try:
         d = datetime.fromisoformat(s)
         return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
@@ -43,110 +45,100 @@ def _dt(s):
         return None
 
 
-def fetch_lolesports():
-    """Return list of normalized matches from lolesports getSchedule (rolling window)."""
+def _cargo(params):
+    r = requests.get(LEAGUEPEDIA_API,
+                     params={**params, "action": "cargoquery", "format": "json"},
+                     timeout=30, headers=UA)
+    r.raise_for_status()
+    return [row.get("title", {}) for row in r.json().get("cargoquery", [])]
+
+
+def _q(items):
+    return ",".join("'%s'" % str(x).replace("'", "") for x in items)
+
+
+def discover_pages(year, leagues):
+    """Return {OverviewPage: League} for tournaments of the given year+leagues."""
     try:
-        r = requests.get(SCHEDULE_URL, headers=HEADERS, timeout=25)
-        r.raise_for_status()
-        events = (r.json().get("data", {}).get("schedule", {}) or {}).get("events") or []
+        rows = _cargo({
+            "tables": "Tournaments=T",
+            "fields": "T.OverviewPage=page,T.League=league",
+            "where": f"T.Year='{year}' AND T.League IN ({_q(leagues)})",
+            "limit": "500",
+        })
     except Exception as e:  # noqa
-        print(f"WARN: lolesports fetch failed ({e})")
-        return []
-    out = []
-    for ev in events:
-        if ev.get("type") != "match":
-            continue
-        m = ev.get("match") or {}
-        teams = m.get("teams") or []
-        if len(teams) < 2:
-            continue
-        league = (ev.get("league") or {}).get("name", "")
-        out.append(to_match(
-            mid=m.get("id") or ev.get("startTime", "") + league,
-            league=league,
-            block=ev.get("blockName") or "",
-            utc=_dt(ev.get("startTime")),
-            state=ev.get("state", "unstarted"),
-            bo=(m.get("strategy") or {}).get("count"),
-            a=teams[0], b=teams[1],
-            source="lolesports",
-        ))
-    return out
+        print(f"WARN: Leaguepedia discover failed ({e})")
+        return {}
+    return {r["page"]: (r.get("league") or r["page"]) for r in rows if r.get("page")}
 
 
-def to_match(mid, league, block, utc, state, bo, a, b, source):
-    def team(t):
-        res = t.get("result") or {}
-        return {
-            "code": t.get("code") or t.get("name", "?"),
-            "name": t.get("name", "?"),
-            "wins": res.get("gameWins"),
-            "outcome": res.get("outcome"),
-        }
+def _row_to_match(t, page_league):
+    utc = _dt(t.get("dt"))
+    if not utc:
+        return None
+    t1 = (t.get("t1") or "").strip() or "TBD"
+    t2 = (t.get("t2") or "").strip() or "TBD"
+    s1, s2, win = t.get("s1"), t.get("s2"), t.get("win")
+    done = win in ("1", "2")
+    now = datetime.now(timezone.utc)
+    state = "completed" if done else ("inProgress" if utc <= now else "unstarted")
+    op = t.get("op") or ""
     return {
-        "id": str(mid), "league": league, "block": block, "utc": utc,
-        "state": state,  # unstarted / inProgress / completed
-        "bo": bo, "a": team(a), "b": team(b), "source": source,
+        "id": t.get("mid") or f"{op}|{t1}|{t2}|{t.get('dt')}",
+        "league": page_league.get(op, op), "tournament": op,
+        "block": (t.get("rnd") or t.get("tab") or "").strip(),
+        "utc": utc, "state": state,
+        "bo": int(t["bo"]) if str(t.get("bo", "")).isdigit() else None,
+        "a": {"code": t1, "name": t1, "wins": int(s1) if str(s1).isdigit() else None,
+              "outcome": ("win" if win == "1" else "loss" if win == "2" else None)},
+        "b": {"code": t2, "name": t2, "wins": int(s2) if str(s2).isdigit() else None,
+              "outcome": ("win" if win == "2" else "loss" if win == "1" else None)},
+        "source": "leaguepedia",
     }
 
 
-def fetch_leaguepedia(pages=None):
-    """Best-effort pull of extra tournaments from Leaguepedia MatchSchedule."""
-    pages = pages or [p.strip() for p in
-                      os.environ.get("LOL_EXTRA_PAGES", ",".join(DEFAULT_EXTRA_PAGES)).split(",")
-                      if p.strip()]
+def fetch_leaguepedia_season(year=None, leagues=None):
+    year = year or os.environ.get("LOL_YEAR", YEAR_DEFAULT)
+    leagues = leagues or [x.strip() for x in
+                          os.environ.get("LOL_LEAGUES", LEAGUES_DEFAULT).split(",") if x.strip()]
+    page_league = discover_pages(year, leagues)
+    # allow manual extra OverviewPages (comma-separated)
+    for p in os.environ.get("LOL_EXTRA_PAGES", "").split(","):
+        p = p.strip()
+        if p:
+            page_league.setdefault(p, p)
+    pages = list(page_league)
+    fields = ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,MS.Team1Score=s1,"
+              "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,MS.Round=rnd,"
+              "MS.OverviewPage=op,MS.MatchId=mid")
     out = []
-    for page in pages:
-        try:
-            params = {
-                "action": "cargoquery", "format": "json", "limit": "200",
-                "tables": "MatchSchedule=MS",
-                "fields": ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,"
-                           "MS.Team1Score=s1,MS.Team2Score=s2,MS.BestOf=bo,"
-                           "MS.Winner=win,MS.Tab=tab,MS.MatchId=mid"),
-                "where": f'MS.OverviewPage="{page}"',
-                "order_by": "MS.DateTime_UTC",
-            }
-            r = requests.get(LEAGUEPEDIA_API, params=params, timeout=20,
-                             headers={"User-Agent": "lol-esports-calendar/1.0"})
-            r.raise_for_status()
-            rows = r.json().get("cargoquery", [])
-        except Exception as e:  # noqa
-            print(f"WARN: Leaguepedia '{page}' failed ({e})")
-            continue
-        for row in rows:
-            t = row.get("title", {})
-            utc = _dt(t.get("dt"))
-            if not (t.get("t1") and t.get("t2") and utc):
-                continue
-            s1, s2 = t.get("s1"), t.get("s2")
-            win = t.get("win")
-            done = win in ("1", "2")
-            now = datetime.now(timezone.utc)
-            state = "completed" if done else ("inProgress" if utc <= now else "unstarted")
-            out.append({
-                "id": t.get("mid") or f"{page}|{t.get('t1')}|{t.get('t2')}|{t.get('dt')}",
-                "league": page, "block": t.get("tab") or "", "utc": utc, "state": state,
-                "bo": int(t["bo"]) if str(t.get("bo", "")).isdigit() else None,
-                "a": {"code": t["t1"], "name": t["t1"],
-                      "wins": int(s1) if str(s1).isdigit() else None,
-                      "outcome": ("win" if win == "1" else "loss" if win == "2" else None)},
-                "b": {"code": t["t2"], "name": t["t2"],
-                      "wins": int(s2) if str(s2).isdigit() else None,
-                      "outcome": ("win" if win == "2" else "loss" if win == "1" else None)},
-                "source": "leaguepedia",
-            })
+    for i in range(0, len(pages), 8):          # batch pages to keep queries small
+        batch = pages[i:i + 8]
+        offset = 0
+        while True:
+            try:
+                rows = _cargo({
+                    "tables": "MatchSchedule=MS", "fields": fields,
+                    "where": f"MS.OverviewPage IN ({_q(batch)})",
+                    "order_by": "MS.DateTime_UTC", "limit": "500", "offset": str(offset),
+                })
+            except Exception as e:  # noqa
+                print(f"WARN: Leaguepedia MatchSchedule batch failed ({e})")
+                break
+            for t in rows:
+                m = _row_to_match(t, page_league)
+                if m:
+                    out.append(m)
+            if len(rows) < 500:
+                break
+            offset += 500
     return out
 
 
-def fetch_all(include_extra=True):
-    matches = fetch_lolesports()
-    if include_extra:
-        matches += fetch_leaguepedia()
-    # de-dup by id, keep the richest (lolesports preferred)
+def fetch_all(**_):
+    matches = fetch_leaguepedia_season()
     seen = {}
     for m in matches:
-        if m["utc"] is None:
-            continue
-        seen.setdefault(m["id"], m)
+        if m["utc"]:
+            seen.setdefault(m["id"], m)
     return sorted(seen.values(), key=lambda m: m["utc"])
