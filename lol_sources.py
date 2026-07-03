@@ -13,12 +13,22 @@ Future  : lolesports API (getSchedule) — kept for a live-state overlay later.
 Everything is normalized to a common match dict:
   {id, league, tournament, block(round), utc, state, bo, a{code,name,wins,outcome}, b{...}, source}
 """
+import json
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
+
+CACHE_FILE = Path("_cache/schedule.json")   # cache lịch Leaguepedia (làm mới ~1h qua Actions cache key)
+
+
+def _n(s):
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 _SESSION = None
 
@@ -53,9 +63,9 @@ YEAR_DEFAULT = "2026"
 # Domestic leagues: match by OverviewPage prefix ("LCK/2026 Season/...") because
 # their Tournaments.League field is the FULL name ("LoL Champions Korea").
 PREFIXES_DEFAULT = "LCK, LPL, LEC, LCP"
-# International events: match by Tournaments.League (full name) + Year.
+# International events: match by Tournaments.League (giá trị League THẬT trên Leaguepedia).
 EVENT_LEAGUES_DEFAULT = ("Mid-Season Invitational, World Championship, Esports World Cup, "
-                         "Asian Games, KeSPA Cup, Nations Cup, First Stand")
+                         "First Stand, Asian Games 2018, KeSPA, Esports Nations Cup")
 
 # --- lolesports (future live overlay) -------------------------------------
 LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
@@ -219,15 +229,98 @@ def fetch_team_shorts(names):
     return shorts
 
 
-def fetch_all(**_):
-    """Return (matches, ok). ok=False nếu fetch không hoàn tất (rate limit...) -> đừng purge."""
-    matches, ok = fetch_leaguepedia_season()
+def _enrich_shorts(matches):
     names = {m["a"]["name"] for m in matches} | {m["b"]["name"] for m in matches}
     shorts = fetch_team_shorts(list(names))
     for m in matches:
         for side in ("a", "b"):
             nm = m[side]["name"]
             m[side]["code"] = "TBD" if nm == "TBD" else (shorts.get(nm) or _short_fallback(nm))
+
+
+def _load_cache():
+    """Đọc cache lịch (nếu file có). Freshness do Actions cache key (theo giờ) quản."""
+    try:
+        d = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        for m in d["matches"]:
+            m["utc"] = datetime.fromisoformat(m["utc"])
+        print(f"cache HIT: {len(d['matches'])} matches")
+        return d["matches"]
+    except Exception:
+        return None
+
+
+def _save_cache(matches):
+    try:
+        CACHE_FILE.parent.mkdir(exist_ok=True)
+        ser = [{**m, "utc": m["utc"].isoformat()} for m in matches]
+        CACHE_FILE.write_text(json.dumps({"at": time.time(), "matches": ser}), encoding="utf-8")
+    except Exception as e:  # noqa
+        print(f"WARN: cache save failed ({e})")
+
+
+def fetch_lolesports_live():
+    """Trạng thái LIVE thật từ lolesports (giải Riot). 1 GET, cần header key, không rate-limit."""
+    try:
+        r = requests.get(SCHEDULE_URL, timeout=25,
+                         headers={"x-api-key": LOLESPORTS_KEY, "User-Agent": "lol-esports-calendar/1.0"})
+        r.raise_for_status()
+        events = (r.json().get("data", {}).get("schedule", {}) or {}).get("events") or []
+    except Exception as e:  # noqa
+        print(f"WARN: lolesports live failed ({e})")
+        return []
+    out = []
+    for ev in events:
+        if ev.get("type") != "match":
+            continue
+        tms = (ev.get("match") or {}).get("teams") or []
+        if len(tms) < 2:
+            continue
+        def keys(t):
+            return {_n(t.get("code", "")), _n(t.get("name", ""))} - {""}
+        out.append({
+            "utc": _dt(ev.get("startTime")), "state": ev.get("state"),
+            "sides": [(keys(tms[0]), (tms[0].get("result") or {}).get("gameWins")),
+                      (keys(tms[1]), (tms[1].get("result") or {}).get("gameWins"))],
+            "all": keys(tms[0]) | keys(tms[1]),
+        })
+    return out
+
+
+def overlay_live(matches, live):
+    """Đè trạng thái/tỷ số LIVE của lolesports lên các trận khớp (theo đội + giờ ±3h)."""
+    for m in matches:
+        mk = {_n(m["a"]["code"]), _n(m["a"]["name"]), _n(m["b"]["code"]), _n(m["b"]["name"])} - {""}
+        for e in live:
+            if not e["utc"] or abs((e["utc"] - m["utc"]).total_seconds()) > 3 * 3600:
+                continue
+            if not (mk & e["all"]):
+                continue
+            if e["state"] in ("inProgress", "completed"):
+                m["state"] = e["state"]
+                for side in ("a", "b"):
+                    sk = {_n(m[side]["code"]), _n(m[side]["name"])} - {""}
+                    for (ek, wins) in e["sides"]:
+                        if wins is not None and (sk & ek):
+                            m[side]["wins"] = wins
+            break
+    return matches
+
+
+def fetch_all(**_):
+    """Return (matches, ok). Lịch lấy từ cache (nếu có) hoặc Leaguepedia; live đè bằng lolesports."""
+    matches = _load_cache()
+    ok = True
+    if matches is None:                       # cache miss -> lấy Leaguepedia + lưu cache
+        matches, ok = fetch_leaguepedia_season()
+        if ok:
+            _enrich_shorts(matches)
+            _save_cache(matches)
+        else:
+            matches = []
+    # LIVE overlay (luôn chạy, nhẹ) — cho 🔴 + tỷ số ván thật của giải Riot mỗi 5 phút
+    if matches:
+        overlay_live(matches, fetch_lolesports_live())
     seen = {}
     for m in matches:
         if m["utc"]:

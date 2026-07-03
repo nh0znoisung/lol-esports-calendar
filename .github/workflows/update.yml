@@ -2,7 +2,7 @@ name: Sync LoL Esports to Google Calendar
 
 on:
   schedule:
-    - cron: "17 * * * *"     # mỗi giờ (Leaguepedia không real-time + có rate limit)
+    - cron: "*/5 * * * *"     # 5 phút/lần cho LIVE (lolesports). Lịch Leaguepedia được cache ~1h.
   workflow_dispatch: {}
   push:
     branches: [main]
@@ -20,12 +20,12 @@ jobs:
     env:
       GCAL_ID: ${{ secrets.GCAL_ID }}
       GOOGLE_SA_KEY: ${{ secrets.GOOGLE_SA_KEY }}
-      LEAGUEPEDIA_USER: ${{ secrets.LEAGUEPEDIA_USER }}   # tùy chọn: bot password -> rate limit cao hơn
+      LEAGUEPEDIA_USER: ${{ secrets.LEAGUEPEDIA_USER }}
       LEAGUEPEDIA_PASS: ${{ secrets.LEAGUEPEDIA_PASS }}
       FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
       LOL_YEAR: ${{ vars.LOL_YEAR }}
-      LOL_PREFIXES: ${{ vars.LOL_PREFIXES }}            # giải nội địa theo prefix OverviewPage
-      LOL_EVENT_LEAGUES: ${{ vars.LOL_EVENT_LEAGUES }}  # giải quốc tế theo League
+      LOL_PREFIXES: ${{ vars.LOL_PREFIXES }}
+      LOL_EVENT_LEAGUES: ${{ vars.LOL_EVENT_LEAGUES }}
       LOL_FULL_LEAGUES: ${{ vars.LOL_FULL_LEAGUES }}
       LOL_LATE_ONLY: ${{ vars.LOL_LATE_ONLY }}
       LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}
@@ -36,6 +36,18 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install requests google-api-python-client google-auth
+
+      # Cache lịch Leaguepedia, key đổi theo GIỜ -> mỗi giờ làm mới 1 lần; trong giờ thì
+      # dùng lại (bỏ qua Leaguepedia, tránh rate limit), chỉ chạy lolesports live.
+      - name: Hour key
+        id: hk
+        run: echo "h=$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+      - name: Restore schedule cache
+        uses: actions/cache@v4
+        with:
+          path: _cache
+          key: lol-schedule-${{ steps.hk.outputs.h }}
+
       - name: Warn if secrets missing
         if: ${{ env.GCAL_ID == '' || env.GOOGLE_SA_KEY == '' }}
         run: echo "::warning::GCAL_ID / GOOGLE_SA_KEY chưa cấu hình — bỏ qua sync. Xem README."
