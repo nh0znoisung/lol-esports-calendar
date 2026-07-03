@@ -74,7 +74,7 @@ def _dt(s):
         return None
 
 
-def _cargo(params, _tries=3):
+def _cargo(params, _tries=5):
     s = _session()
     q = {**params, "action": "cargoquery", "format": "json", "maxlag": "5"}
     for attempt in range(_tries):
@@ -83,14 +83,14 @@ def _cargo(params, _tries=3):
         j = r.json()
         err = j.get("error", {})
         code = err.get("code", "")
-        if code in ("ratelimited", "maxlag"):     # đợi rồi thử lại
-            time.sleep(5 * (attempt + 1))
+        if code in ("ratelimited", "maxlag"):     # đợi (backoff tăng dần) rồi thử lại
+            time.sleep(10 * (attempt + 1))
             continue
         if err:
             raise RuntimeError(err.get("info", str(err)))
-        time.sleep(1)                              # nhẹ tay giữa các request
+        time.sleep(2)                              # nhẹ tay giữa các request
         return [row.get("title", {}) for row in j.get("cargoquery", [])]
-    raise RuntimeError("rate limited (hết số lần thử) — cân nhắc thêm LEAGUEPEDIA_USER/PASS")
+    raise RuntimeError("rate limited (hết số lần thử) — kiểm tra bot password có tick 'High API limits'")
 
 
 def _q(items):
@@ -98,25 +98,25 @@ def _q(items):
 
 
 def discover_pages(year, prefixes, events):
-    """Return {OverviewPage: league_label}. Domestic by page prefix, events by League name."""
+    """Return {OverviewPage: league_label}. Domestic by page prefix, events by League name.
+    Gộp tất cả prefix vào 1 query để giảm số request (né rate limit)."""
     pages = {}
-    for pref in prefixes:                       # LCK/2026 Season/..., LPL/2026..., ...
+    if prefixes:                                # 1 query cho mọi giải nội địa
+        like = " OR ".join(f"T.OverviewPage LIKE '{p}/{year}%'" for p in prefixes)
         try:
-            rows = _cargo({
-                "tables": "Tournaments=T", "fields": "T.OverviewPage=page",
-                "where": f"T.OverviewPage LIKE '{pref}/{year}%'", "limit": "200",
-            })
+            rows = _cargo({"tables": "Tournaments=T", "fields": "T.OverviewPage=page",
+                           "where": like, "limit": "300"})
             for r in rows:
-                if r.get("page"):
-                    pages[r["page"]] = pref      # league label = "LCK"/"LPL"/...
+                pg = r.get("page")
+                if pg:
+                    pages[pg] = next((p for p in prefixes if pg.startswith(p + "/")),
+                                     pg.split("/")[0])
         except Exception as e:  # noqa
-            print(f"WARN: discover prefix {pref} failed: {e}")
-    if events:
+            print(f"WARN: discover domestic failed: {e}")
+    if events:                                  # 1 query cho giải quốc tế
         try:
-            rows = _cargo({
-                "tables": "Tournaments=T", "fields": "T.OverviewPage=page,T.League=league",
-                "where": f"T.Year='{year}' AND T.League IN ({_q(events)})", "limit": "300",
-            })
+            rows = _cargo({"tables": "Tournaments=T", "fields": "T.OverviewPage=page,T.League=league",
+                           "where": f"T.Year='{year}' AND T.League IN ({_q(events)})", "limit": "300"})
             for r in rows:
                 if r.get("page"):
                     pages[r["page"]] = r.get("league") or r["page"]
@@ -168,9 +168,9 @@ def fetch_leaguepedia_season(year=None, prefixes=None, events=None):
     fields = ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,MS.Team1Score=s1,"
               "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,MS.Round=rnd,"
               "MS.ShownRound=srnd,MS.Venue=venue,MS.OverviewPage=op,MS.MatchId=mid")
-    out = []
-    for i in range(0, len(pages), 20):         # batch pages -> ít request (né rate limit)
-        batch = pages[i:i + 20]
+    out, ok = [], True
+    for i in range(0, len(pages), 40):         # batch pages -> ít request (né rate limit)
+        batch = pages[i:i + 40]
         offset = 0
         while True:
             try:
@@ -181,6 +181,7 @@ def fetch_leaguepedia_season(year=None, prefixes=None, events=None):
                 })
             except Exception as e:  # noqa
                 print(f"WARN: MatchSchedule batch failed: {e}")
+                ok = False           # đánh dấu fetch KHÔNG hoàn tất -> đừng purge
                 break
             for t in rows:
                 m = _row_to_match(t, page_league)
@@ -189,8 +190,8 @@ def fetch_leaguepedia_season(year=None, prefixes=None, events=None):
             if len(rows) < 500:
                 break
             offset += 500
-    print(f"leaguepedia: {len(out)} matches from {len(pages)} tournaments")
-    return out
+    print(f"leaguepedia: {len(out)} matches from {len(pages)} tournaments (ok={ok})")
+    return out, ok
 
 
 def _short_fallback(name):
@@ -219,7 +220,8 @@ def fetch_team_shorts(names):
 
 
 def fetch_all(**_):
-    matches = fetch_leaguepedia_season()
+    """Return (matches, ok). ok=False nếu fetch không hoàn tất (rate limit...) -> đừng purge."""
+    matches, ok = fetch_leaguepedia_season()
     names = {m["a"]["name"] for m in matches} | {m["b"]["name"] for m in matches}
     shorts = fetch_team_shorts(list(names))
     for m in matches:
@@ -230,4 +232,4 @@ def fetch_all(**_):
     for m in matches:
         if m["utc"]:
             seen.setdefault(m["id"], m)
-    return sorted(seen.values(), key=lambda m: m["utc"])
+    return sorted(seen.values(), key=lambda m: m["utc"]), ok

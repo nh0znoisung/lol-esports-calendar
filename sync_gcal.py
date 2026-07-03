@@ -319,7 +319,7 @@ def main():
     ap.add_argument("--no-extra", action="store_true", help="skip Leaguepedia extra events")
     args = ap.parse_args()
 
-    matches = src.fetch_all(include_extra=not args.no_extra)
+    matches, fetch_ok = src.fetch_all()
     full = {lkey(x) for x in (os.environ.get("LOL_FULL_LEAGUES") or FULL_LEAGUES_DEFAULT).split(",") if x.strip()}
     late = {lkey(x) for x in (os.environ.get("LOL_LATE_ONLY") or LATE_ONLY_DEFAULT).split(",") if x.strip()}
     matches = [m for m in matches if keep_match(m, full, late)]
@@ -336,7 +336,13 @@ def main():
         sys.exit(0 if (live or near) else 1)
 
     favs = {norm(t) for t in (os.environ.get("FAVORITE_TEAMS") or DEFAULT_FAVORITES).split(",") if t.strip()}
-    print(f"matches: {len(matches)} | favorites: {sorted(favs)}")
+    print(f"matches: {len(matches)} | fetch_ok={fetch_ok} | favorites: {sorted(favs)}")
+
+    # AN TOÀN: fetch lỗi hoặc rỗng -> KHÔNG ghi/xoá gì (giữ nguyên lịch cũ, khỏi mất event)
+    if not matches or not fetch_ok:
+        print("Fetch chưa hoàn tất/không có trận — bỏ qua sync & purge để không xoá nhầm lịch.")
+        return
+
     svc = None if args.dry_run else gcal_service()
     cal_id = (os.environ.get("GCAL_ID") or "DRY").strip()   # bỏ newline/space thừa từ secret
     stats, keep = {}, set()
