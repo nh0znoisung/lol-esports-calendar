@@ -14,6 +14,7 @@ Everything is normalized to a common match dict:
   {id, league, tournament, block(round), utc, state, bo, a{code,name,wins,outcome}, b{...}, source}
 """
 import os
+import re
 import time
 from datetime import datetime, timezone
 
@@ -126,7 +127,7 @@ def _row_to_match(t, page_league):
     return {
         "id": t.get("mid") or f"{op}|{t1}|{t2}|{t.get('dt')}",
         "league": page_league.get(op, op), "tournament": op,
-        "block": (t.get("tab") or "").strip(),
+        "block": (t.get("rnd") or t.get("tab") or "").strip(),
         "utc": utc, "state": state,
         "bo": int(t["bo"]) if str(t.get("bo", "")).isdigit() else None,
         "a": {"code": t1, "name": t1, "wins": int(s1) if str(s1).isdigit() else None,
@@ -149,7 +150,7 @@ def fetch_leaguepedia_season(year=None, leagues=None):
             page_league.setdefault(p, p)
     pages = list(page_league)
     fields = ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,MS.Team1Score=s1,"
-              "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,"
+              "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,MS.Round=rnd,"
               "MS.OverviewPage=op,MS.MatchId=mid")
     out = []
     for i in range(0, len(pages), 20):         # batch pages -> ít request (né rate limit)
@@ -176,8 +177,39 @@ def fetch_leaguepedia_season(year=None, leagues=None):
     return out
 
 
+def _short_fallback(name):
+    base = re.sub(r"\s*\(.*?\)", "", name).strip()      # bỏ "(2024 American Team)" ...
+    if len(base) <= 5:
+        return base
+    ac = "".join(w[0] for w in re.split(r"\s+", base) if w and w[0].isalnum()).upper()
+    return ac or base[:4]
+
+
+def fetch_team_shorts(names):
+    names = sorted({n for n in names if n and n != "TBD"})
+    shorts = {}
+    for i in range(0, len(names), 50):
+        batch = names[i:i + 50]
+        try:
+            rows = _cargo({"tables": "Teams=T", "fields": "T.Name=name,T.Short=short",
+                           "where": f"T.Name IN ({_q(batch)})", "limit": "500"})
+        except Exception as e:  # noqa
+            print(f"WARN: team shorts failed ({e})")
+            continue
+        for r in rows:
+            if r.get("name") and r.get("short"):
+                shorts[r["name"]] = r["short"]
+    return shorts
+
+
 def fetch_all(**_):
     matches = fetch_leaguepedia_season()
+    names = {m["a"]["name"] for m in matches} | {m["b"]["name"] for m in matches}
+    shorts = fetch_team_shorts(list(names))
+    for m in matches:
+        for side in ("a", "b"):
+            nm = m[side]["name"]
+            m[side]["code"] = "TBD" if nm == "TBD" else (shorts.get(nm) or _short_fallback(nm))
     seen = {}
     for m in matches:
         if m["utc"]:

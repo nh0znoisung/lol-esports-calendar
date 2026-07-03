@@ -64,6 +64,45 @@ PLAYOFF_RE = re.compile(
 
 STATE_ICON = {"unstarted": "⚪", "inProgress": "🔴", "completed": "✅"}
 
+# Nhánh bracket (để phân biệt vòng loại trực tiếp với vòng bảng/tuần thường)
+BRACKET_RE = re.compile(
+    r"playoff|final|knockout|bracket|round|semifinal|quarterfinal|grand|"
+    r"tiebreak|promotion|elimination|play-?in", re.I)
+# Màu cho các round KHÔNG phải chung kết (không dùng đỏ). Đỏ để dành cho WF/LF/GF + đội follow.
+ROUND_COLORS = ["2", "1", "6", "9", "10"]   # Sage, Lavender, Tangerine, Blueberry, Basil
+
+
+def is_bracket(block):
+    return bool(BRACKET_RE.search(block or ""))
+
+
+def is_final(block):
+    b = block or ""
+    if re.search(r"semi|quarter", b, re.I):     # bán/tứ kết KHÔNG tính là "final"
+        return False
+    return bool(re.search(r"grand\s*final|winner.{0,3}final|loser.{0,3}final|\bfinals?\b", b, re.I))
+
+
+def round_num(block):
+    mo = re.search(r"(\d+)", block or "")
+    return int(mo.group(1)) if mo else None
+
+
+def round_short(block):
+    low = (block or "").lower()
+    if "grand" in low:
+        return "GF"
+    if "winner" in low and "final" in low:
+        return "WF"
+    if "loser" in low and "final" in low:
+        return "LF"
+    if re.search(r"\bfinal", low):
+        return "Final"
+    mo = re.search(r"(\d+)", block or "")
+    if mo and "round" in low:
+        return "R" + mo.group(1)
+    return (block or "")[:12]
+
 
 def norm(s):
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
@@ -95,11 +134,19 @@ def is_fav(m, favs):
 
 
 def color_of(m, favs):
-    if is_fav(m, favs) or is_playoff(m):
-        return HOT_COLOR
+    if is_fav(m, favs):
+        return HOT_COLOR                       # đội follow luôn đỏ
+    block = m.get("block") or ""
+    if is_bracket(block):
+        if is_final(block):
+            return HOT_COLOR                   # chỉ WF / LF / GF mới đỏ
+        rn = round_num(block)
+        if rn:
+            return ROUND_COLORS[(rn - 1) % len(ROUND_COLORS)]   # mỗi round một màu
+        return "3"                             # Grape cho round bracket không đánh số
     t = tier_of(m["league"])
     if t == "other" and m.get("source") == "leaguepedia":
-        t = "intl"   # giải Leaguepedia opt-in coi như quốc tế
+        t = "intl"
     return TIER_COLOR[t]
 
 
@@ -132,7 +179,11 @@ def render(m):
         mid = "vs"
     else:
         mid = f"{wa}-{wb}"
-    summary = f"{icon} [{ls}] {a['code']} {mid} {b['code']}"
+    tag = ""
+    if is_bracket(m.get("block") or ""):
+        rs = round_short(m["block"])
+        tag = f"{rs}: " if rs else ""
+    summary = f"{icon} [{ls}] {tag}{a['code']} {mid} {b['code']}"
 
     bo = f"Bo{m['bo']}" if m.get("bo") else ""
     block = m.get("block") or ""
