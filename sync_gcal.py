@@ -189,6 +189,8 @@ def render(m):
     block = m.get("block") or ""
     head = " · ".join(x for x in [m["league"], block, bo] if x)
     lines = [head, f"{a['name']} vs {b['name']}", f"Giờ VN: {vn_str(m['utc'])}"]
+    if m.get("venue"):
+        lines.append(f"Sân: {m['venue']}")
     if mid != "vs":
         lines.append(f"Tỷ số: {a['code']} {wa}-{wb} {b['code']}")
     lines.append("LoL Esports")

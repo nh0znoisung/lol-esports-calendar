@@ -127,7 +127,8 @@ def _row_to_match(t, page_league):
     return {
         "id": t.get("mid") or f"{op}|{t1}|{t2}|{t.get('dt')}",
         "league": page_league.get(op, op), "tournament": op,
-        "block": (t.get("rnd") or t.get("tab") or "").strip(),
+        "block": (t.get("srnd") or t.get("rnd") or t.get("tab") or "").strip(),
+        "venue": (t.get("venue") or "").strip(),
         "utc": utc, "state": state,
         "bo": int(t["bo"]) if str(t.get("bo", "")).isdigit() else None,
         "a": {"code": t1, "name": t1, "wins": int(s1) if str(s1).isdigit() else None,
@@ -151,7 +152,7 @@ def fetch_leaguepedia_season(year=None, leagues=None):
     pages = list(page_league)
     fields = ("MS.Team1=t1,MS.Team2=t2,MS.DateTime_UTC=dt,MS.Team1Score=s1,"
               "MS.Team2Score=s2,MS.BestOf=bo,MS.Winner=win,MS.Tab=tab,MS.Round=rnd,"
-              "MS.OverviewPage=op,MS.MatchId=mid")
+              "MS.ShownRound=srnd,MS.Venue=venue,MS.OverviewPage=op,MS.MatchId=mid")
     out = []
     for i in range(0, len(pages), 20):         # batch pages -> ít request (né rate limit)
         batch = pages[i:i + 20]
