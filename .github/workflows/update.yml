@@ -24,7 +24,8 @@ jobs:
       LEAGUEPEDIA_PASS: ${{ secrets.LEAGUEPEDIA_PASS }}
       FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
       LOL_YEAR: ${{ vars.LOL_YEAR }}
-      LOL_LEAGUES: ${{ vars.LOL_LEAGUES }}
+      LOL_PREFIXES: ${{ vars.LOL_PREFIXES }}            # giải nội địa theo prefix OverviewPage
+      LOL_EVENT_LEAGUES: ${{ vars.LOL_EVENT_LEAGUES }}  # giải quốc tế theo League
       LOL_FULL_LEAGUES: ${{ vars.LOL_FULL_LEAGUES }}
       LOL_LATE_ONLY: ${{ vars.LOL_LATE_ONLY }}
       LOL_EXTRA_PAGES: ${{ vars.LOL_EXTRA_PAGES }}

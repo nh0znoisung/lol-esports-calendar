@@ -50,11 +50,12 @@ LEAGUEPEDIA_API = "https://lol.fandom.com/api.php"
 UA = {"User-Agent": "lol-esports-calendar/1.0"}
 
 YEAR_DEFAULT = "2026"
-# Leaguepedia "League" values to include. LCK/LCP full; LPL/LEC discovered too
-# but filtered to playoffs downstream; the rest are international events.
-LEAGUES_DEFAULT = ("LCK, LCP, LPL, LEC, First Stand, Mid-Season Invitational, "
-                   "World Championship, Esports World Cup, Asian Games, "
-                   "KeSPA Cup, Nations Cup")
+# Domestic leagues: match by OverviewPage prefix ("LCK/2026 Season/...") because
+# their Tournaments.League field is the FULL name ("LoL Champions Korea").
+PREFIXES_DEFAULT = "LCK, LPL, LEC, LCP"
+# International events: match by Tournaments.League (full name) + Year.
+EVENT_LEAGUES_DEFAULT = ("Mid-Season Invitational, World Championship, Esports World Cup, "
+                         "Asian Games, KeSPA Cup, Nations Cup, First Stand")
 
 # --- lolesports (future live overlay) -------------------------------------
 LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
@@ -96,20 +97,32 @@ def _q(items):
     return ",".join("'%s'" % str(x).replace("'", "") for x in items)
 
 
-def discover_pages(year, leagues):
-    """Return {OverviewPage: League} for tournaments of the given year+leagues."""
-    where = f"T.Year='{year}' AND T.League IN ({_q(leagues)})"
-    try:
-        rows = _cargo({
-            "tables": "Tournaments=T",
-            "fields": "T.OverviewPage=page,T.League=league",
-            "where": where, "limit": "500",
-        })
-    except Exception as e:  # noqa
-        print(f"WARN: discover failed: {e} | where={where}")
-        return {}
-    pages = {r["page"]: (r.get("league") or r["page"]) for r in rows if r.get("page")}
-    print(f"discover: {len(pages)} tournaments for {year} | sample: {list(pages)[:5]}")
+def discover_pages(year, prefixes, events):
+    """Return {OverviewPage: league_label}. Domestic by page prefix, events by League name."""
+    pages = {}
+    for pref in prefixes:                       # LCK/2026 Season/..., LPL/2026..., ...
+        try:
+            rows = _cargo({
+                "tables": "Tournaments=T", "fields": "T.OverviewPage=page",
+                "where": f"T.OverviewPage LIKE '{pref}/{year}%'", "limit": "200",
+            })
+            for r in rows:
+                if r.get("page"):
+                    pages[r["page"]] = pref      # league label = "LCK"/"LPL"/...
+        except Exception as e:  # noqa
+            print(f"WARN: discover prefix {pref} failed: {e}")
+    if events:
+        try:
+            rows = _cargo({
+                "tables": "Tournaments=T", "fields": "T.OverviewPage=page,T.League=league",
+                "where": f"T.Year='{year}' AND T.League IN ({_q(events)})", "limit": "300",
+            })
+            for r in rows:
+                if r.get("page"):
+                    pages[r["page"]] = r.get("league") or r["page"]
+        except Exception as e:  # noqa
+            print(f"WARN: discover events failed: {e}")
+    print(f"discover: {len(pages)} tournaments for {year} | sample: {list(pages)[:6]}")
     return pages
 
 
@@ -139,11 +152,13 @@ def _row_to_match(t, page_league):
     }
 
 
-def fetch_leaguepedia_season(year=None, leagues=None):
+def fetch_leaguepedia_season(year=None, prefixes=None, events=None):
     year = year or os.environ.get("LOL_YEAR") or YEAR_DEFAULT
-    leagues = leagues or [x.strip() for x in
-                          (os.environ.get("LOL_LEAGUES") or LEAGUES_DEFAULT).split(",") if x.strip()]
-    page_league = discover_pages(year, leagues)
+    prefixes = prefixes or [x.strip() for x in
+                            (os.environ.get("LOL_PREFIXES") or PREFIXES_DEFAULT).split(",") if x.strip()]
+    events = events or [x.strip() for x in
+                        (os.environ.get("LOL_EVENT_LEAGUES") or EVENT_LEAGUES_DEFAULT).split(",") if x.strip()]
+    page_league = discover_pages(year, prefixes, events)
     # allow manual extra OverviewPages (comma-separated)
     for p in os.environ.get("LOL_EXTRA_PAGES", "").split(","):
         p = p.strip()
