@@ -31,8 +31,8 @@ DEFAULT_FAVORITES = "T1, HLE, GEN, KT, GAM, TSW"
 # Lọc giải: giải quốc tế (tier 'intl') luôn có; FULL_LEAGUES có mọi trận;
 # LATE_ONLY chỉ lấy trận playoff/cuối mùa; còn lại (Prime League, LRS...) bỏ.
 # Chỉnh bằng repo Variable LOL_LEAGUES / LOL_LATE_ONLY nếu muốn.
-FULL_LEAGUES_DEFAULT = "LCK, LCP"
-LATE_ONLY_DEFAULT = "LPL, LEC"
+FULL_LEAGUES_DEFAULT = "LCK, LCP, LPL, LEC"   # cả 4 giải nội địa: lấy hết trận
+LATE_ONLY_DEFAULT = ""                          # trống = không giới hạn chỉ-playoff giải nào
 
 # league (normalized) -> tier
 LEAGUE_TIER = {
