@@ -233,8 +233,6 @@ def upsert(svc, cal_id, m, favs, dry=False):
         from googleapiclient.errors import HttpError
         try:
             ex = svc.events().get(calendarId=cal_id, eventId=eid).execute()
-            if ex.get("status") == "cancelled":
-                ex = None
         except HttpError as e:
             if e.resp.status != 404:
                 raise
@@ -275,10 +273,22 @@ def upsert(svc, cal_id, m, favs, dry=False):
     if dry:
         print(f"[dry] {summary:44} color={color:>2} Bo{m.get('bo')} {dur}h {start:%m-%d %H:%MZ}")
         return "dry"
+
+    from googleapiclient.errors import HttpError
     if ex is None:
-        svc.events().insert(calendarId=cal_id, body=body).execute()
-        return "insert"
-    changed = any(ex.get(k) != body[k] for k in ("summary", "colorId", "description")) \
+        try:
+            svc.events().insert(calendarId=cal_id, body=body).execute()
+            return "insert"
+        except HttpError as e:
+            if e.resp.status != 409:            # 409 = id đã tồn tại (event cũ bị xoá còn "cancelled")
+                raise
+            body["status"] = "confirmed"
+            svc.events().patch(calendarId=cal_id, eventId=eid, body=body).execute()
+            return "revive"
+
+    body["status"] = "confirmed"                # hồi sinh nếu event từng bị purge (cancelled)
+    changed = ex.get("status") == "cancelled" \
+        or any(ex.get(k) != body[k] for k in ("summary", "colorId", "description")) \
         or ex.get("start", {}).get("dateTime", "")[:16] != body["start"]["dateTime"][:16] \
         or ex.get("end", {}).get("dateTime", "")[:16] != body["end"]["dateTime"][:16]
     if changed:
@@ -347,7 +357,11 @@ def main():
     cal_id = (os.environ.get("GCAL_ID") or "DRY").strip()   # bỏ newline/space thừa từ secret
     stats, keep = {}, set()
     for m in matches:
-        res = upsert(svc, cal_id, m, favs, dry=args.dry_run)
+        try:
+            res = upsert(svc, cal_id, m, favs, dry=args.dry_run)
+        except Exception as e:  # noqa - 1 trận lỗi không được làm sập cả run
+            print(f"WARN: upsert failed for {m['id']}: {e}")
+            res = "error"
         stats[res] = stats.get(res, 0) + 1
         keep.add(event_id(m))
     if svc and not args.dry_run:
