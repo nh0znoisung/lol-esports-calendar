@@ -221,7 +221,22 @@ def _parse_dt(ex, key):
         return None
 
 
-def upsert(svc, cal_id, m, favs, dry=False):
+def send_ntfy(messages, title):
+    """Bắn push qua ntfy.sh khi có kết quả đổi (cần đặt biến NTFY_TOPIC)."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic or not messages:
+        return
+    import requests
+    try:
+        requests.post(f"https://ntfy.sh/{topic}",
+                      data="\n".join(messages[:20]).encode("utf-8"),
+                      headers={"Title": title, "Tags": "video_game"}, timeout=15)
+        print(f"ntfy: sent {len(messages)} update(s)")
+    except Exception as e:  # noqa
+        print(f"WARN: ntfy failed ({e})")
+
+
+def upsert(svc, cal_id, m, favs, dry=False, notify=None):
     summary, desc = render(m)
     eid = event_id(m)
     color = color_of(m, favs)
@@ -292,6 +307,9 @@ def upsert(svc, cal_id, m, favs, dry=False):
         or ex.get("start", {}).get("dateTime", "")[:16] != body["start"]["dateTime"][:16] \
         or ex.get("end", {}).get("dateTime", "")[:16] != body["end"]["dateTime"][:16]
     if changed:
+        if (notify is not None and ex.get("status") != "cancelled"
+                and ex.get("summary") and ex.get("summary") != body["summary"]):
+            notify.append(body["summary"])          # tiêu đề đổi (ván/kết thúc/điền đội) -> báo
         svc.events().patch(calendarId=cal_id, eventId=eid, body=body).execute()
         return "update"
     return "nochange"
@@ -355,10 +373,10 @@ def main():
 
     svc = None if args.dry_run else gcal_service()
     cal_id = (os.environ.get("GCAL_ID") or "DRY").strip()   # bỏ newline/space thừa từ secret
-    stats, keep = {}, set()
+    stats, keep, notify = {}, set(), []
     for m in matches:
         try:
-            res = upsert(svc, cal_id, m, favs, dry=args.dry_run)
+            res = upsert(svc, cal_id, m, favs, dry=args.dry_run, notify=notify)
         except Exception as e:  # noqa - 1 trận lỗi không được làm sập cả run
             print(f"WARN: upsert failed for {m['id']}: {e}")
             res = "error"
@@ -366,6 +384,7 @@ def main():
         keep.add(event_id(m))
     if svc and not args.dry_run:
         print("purged (rác/quá cũ):", purge(svc, cal_id, keep))
+        send_ntfy(notify, "🎮 LoL Esports — kết quả cập nhật")
     print("done:", stats)
 
 

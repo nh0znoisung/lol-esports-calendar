@@ -24,6 +24,7 @@ jobs:
       LEAGUEPEDIA_USER: ${{ secrets.LEAGUEPEDIA_USER }}
       LEAGUEPEDIA_PASS: ${{ secrets.LEAGUEPEDIA_PASS }}
       FAVORITE_TEAMS: ${{ vars.FAVORITE_TEAMS }}
+      NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}          # đặt để nhận push khi có kết quả đổi
       LOL_YEAR: ${{ vars.LOL_YEAR }}
       LOL_PREFIXES: ${{ vars.LOL_PREFIXES }}
       LOL_EVENT_LEAGUES: ${{ vars.LOL_EVENT_LEAGUES }}
