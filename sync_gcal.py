@@ -253,15 +253,14 @@ def upsert(svc, cal_id, m, favs, dry=False, notify=None):
                 raise
             ex = None
 
-    # Giờ bắt đầu: không bao giờ trôi MUỘN hơn giá trị đã lưu; nếu đang đá mà
-    # thực tế sớm hơn lịch thì đôn lên 'now' (ghim giờ sớm nhất đã thấy).
+    # Giờ bắt đầu = giờ dự kiến (đã ưu tiên giờ lolesports qua overlay). Chỉ ĐÔN SỚM
+    # khi trận thật sự bắt đầu sớm (đang đá & now trong vòng 45' TRƯỚC giờ dự kiến).
+    # KHÔNG ghim theo event cũ nữa -> nếu từng bị lệch, lần chạy này tự sửa lại đúng.
     start = m["utc"]
-    ex_start = _parse_dt(ex, "start")
-    if ex_start:
-        start = min(start, ex_start)
     if m["state"] == "inProgress":
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        start = min(start, now)
+        if start - timedelta(minutes=45) <= now < start:
+            start = now
 
     # Kết thúc: mặc định start + khối Bo. Khi trận đã XONG mà thực tế kết thúc
     # sớm hơn khối → co end lại (ghim giờ kết thúc sớm nhất, không phình lại).

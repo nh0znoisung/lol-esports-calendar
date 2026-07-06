@@ -292,10 +292,11 @@ def overlay_live(matches, live):
     for m in matches:
         mk = {_n(m["a"]["code"]), _n(m["a"]["name"]), _n(m["b"]["code"]), _n(m["b"]["name"])} - {""}
         for e in live:
-            if not e["utc"] or abs((e["utc"] - m["utc"]).total_seconds()) > 3 * 3600:
+            if not e["utc"] or abs((e["utc"] - m["utc"]).total_seconds()) > 2 * 3600:
                 continue
             if not (mk & e["all"]):
                 continue
+            m["utc"] = e["utc"]        # tin giờ lolesports (chính xác hơn Leaguepedia)
             if e["state"] in ("inProgress", "completed"):
                 m["state"] = e["state"]
                 for side in ("a", "b"):
