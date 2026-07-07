@@ -259,7 +259,9 @@ def upsert(svc, cal_id, m, favs, dry=False, notify=None):
     start = m["utc"]
     if m["state"] == "inProgress":
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        if start - timedelta(minutes=45) <= now < start:
+        # Đã đang đá mà chưa tới giờ dự kiến -> bắt đầu sớm (vd trận trước xong sớm).
+        # Đôn về 'now', giới hạn 150' để không kéo nhầm (overlay ±2h đã chặn phần lớn).
+        if start - timedelta(minutes=150) <= now < start:
             start = now
 
     # Kết thúc: mặc định start + khối Bo. Khi trận đã XONG mà thực tế kết thúc
