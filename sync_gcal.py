@@ -263,6 +263,12 @@ def upsert(svc, cal_id, m, favs, dry=False, notify=None):
         # Đôn về 'now', giới hạn 150' để không kéo nhầm (overlay ±2h đã chặn phần lớn).
         if start - timedelta(minutes=150) <= now < start:
             start = now
+    elif m["state"] == "completed":
+        # Trận đã xong: giữ lại giờ bắt đầu sớm đã ghi lúc live (nếu hợp lệ, ≤150' sớm).
+        # Lỗi cũ (lệch >150') sẽ tự trả về giờ dự kiến.
+        ex_start = _parse_dt(ex, "start")
+        if ex_start and ex_start < start and (start - ex_start) <= timedelta(minutes=150):
+            start = ex_start
 
     # Kết thúc: mặc định start + khối Bo. Khi trận đã XONG mà thực tế kết thúc
     # sớm hơn khối → co end lại (ghim giờ kết thúc sớm nhất, không phình lại).
