@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: _cache
-          key: lol-schedule-${{ steps.hk.outputs.h }}
+          key: lol-schedule-${{ hashFiles('lol_sources.py') }}-${{ steps.hk.outputs.h }}
 
       - name: Warn if secrets missing
         if: ${{ env.GCAL_ID == '' || env.GOOGLE_SA_KEY == '' }}
