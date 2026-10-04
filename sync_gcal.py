@@ -4,7 +4,7 @@ Sync LoL esports matches (lolesports + Leaguepedia) into a Google Calendar via A
 
 Colors (Google's 11 event colorIds):
   - Favorite team OR playoff/final/seeding match -> Tomato red (đỏ đậm)
-  - International (MSI/Worlds/EWC/First Stand/Asiad/Nations/KeSPA) -> Grape purple
+  - International (MSI/Worlds/EWC/First Stand/Asiad/Nations/KeSPA/Demacia) -> Grape purple
   - LCK -> Tangerine, LCP -> Blueberry (đậm; LCP có đội VN)
   - LEC -> Sage, LPL -> Lavender (nhạt hơn)
   - other leagues -> Graphite
@@ -41,6 +41,7 @@ LEAGUE_TIER = {
     "worldchampionship": "intl", "firststand": "intl",
     "esportsworldcup": "intl", "ewc": "intl", "nationscup": "intl",
     "esportsnationscup": "intl", "asiangames": "intl", "kespacup": "intl", "kespa": "intl",
+    "demaciacup": "intl",
 }
 TIER_COLOR = {
     "lck": "6",    # Tangerine
@@ -57,6 +58,7 @@ LEAGUE_SHORT = {
     "worldchampionship": "Worlds", "worlds": "Worlds", "esportsworldcup": "EWC",
     "firststand": "First Stand", "asiangames": "Asiad", "nationscup": "Nations Cup",
     "esportsnationscup": "Nations Cup", "kespacup": "KeSPA", "kespa": "KeSPA",
+    "demaciacup": "Demacia",
 }
 PLAYOFF_RE = re.compile(
     r"playoff|final|knockout|bracket|grand|tiebreak|seeding|seed|promotion|elimination|"
@@ -259,13 +261,12 @@ def upsert(svc, cal_id, m, favs, dry=False, notify=None):
     start = m["utc"]
     if m["state"] == "inProgress":
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        # Đã đang đá mà chưa tới giờ dự kiến -> bắt đầu sớm (vd trận trước xong sớm).
-        # Đôn về 'now', giới hạn 150' để không kéo nhầm (overlay ±2h đã chặn phần lớn).
+        # Bắt được lúc còn TRƯỚC giờ dự kiến -> đá sớm -> đôn về 'now' (≤150').
         if start - timedelta(minutes=150) <= now < start:
             start = now
-    elif m["state"] == "completed":
-        # Trận đã xong: giữ lại giờ bắt đầu sớm đã ghi lúc live (nếu hợp lệ, ≤150' sớm).
-        # Lỗi cũ (lệch >150') sẽ tự trả về giờ dự kiến.
+    if m["state"] in ("inProgress", "completed"):
+        # Giữ lại giờ bắt đầu sớm đã ghi (cho cả đang đá lẫn đã xong), không reset về giờ
+        # dự kiến. Giới hạn ≤150' để lỗi cũ (lệch nhiều) tự trả về đúng.
         ex_start = _parse_dt(ex, "start")
         if ex_start and ex_start < start and (start - ex_start) <= timedelta(minutes=150):
             start = ex_start

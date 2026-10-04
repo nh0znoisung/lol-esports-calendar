@@ -4,7 +4,7 @@ Data sources for the LoL esports calendar.
 
 Primary : Leaguepedia (lol.fandom.com) Cargo API — covers the WHOLE 2026 season
           across every league/event (LCK, LCP, LPL, LEC, MSI, Worlds, EWC, Asian
-          Games, KeSPA Cup, Nations Cup, First Stand ...), including future/TBD
+          Games, KeSPA Cup, Demacia Cup, Nations Cup, First Stand ...), including future/TBD
           bracket matches and round names. Auto-discovers tournaments by Year +
           League, then pulls their MatchSchedule (plain GET, no key).
 Future  : lolesports API (getSchedule) — kept for a live-state overlay later.
@@ -65,7 +65,7 @@ YEAR_DEFAULT = "2026"
 PREFIXES_DEFAULT = "LCK, LPL, LEC, LCP"
 # International events: match by Tournaments.League (giá trị League THẬT trên Leaguepedia).
 EVENT_LEAGUES_DEFAULT = ("Mid-Season Invitational, World Championship, Esports World Cup, "
-                         "First Stand, Asian Games 2018, KeSPA, Esports Nations Cup")
+                         "First Stand, Asian Games 2018, KeSPA, Esports Nations Cup, Demacia Cup")
 
 # --- lolesports (future live overlay) -------------------------------------
 LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"

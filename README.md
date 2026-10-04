@@ -2,7 +2,7 @@
 
 A self-updating Google Calendar for League of Legends esports — LCK, LPL, LEC, LCP,
 international events (MSI, Worlds, First Stand, EWC) plus best-effort extras
-(KeSPA Cup, Asian Games, Nations Cup). Writes events straight into a calendar you own
+(KeSPA Cup, Demacia Cup, Asian Games, Nations Cup). Writes events straight into a calendar you own
 via the Google Calendar API, refreshing ~every 5 minutes during match windows.
 
 Features:
@@ -68,7 +68,7 @@ in `sync_gcal.py`):
 | Bucket | Color |
 |--------|-------|
 | Favorite team · playoffs · finals · seeding | Tomato (red) |
-| International (MSI/Worlds/EWC/First Stand/Asiad/Nations/KeSPA) | Grape (purple) |
+| International (MSI/Worlds/EWC/First Stand/Asiad/Nations/KeSPA/Demacia) | Grape (purple) |
 | LCK | Tangerine (orange) |
 | LCP | Blueberry (blue) |
 | LEC | Sage (light green) |
