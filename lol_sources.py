@@ -65,7 +65,8 @@ YEAR_DEFAULT = "2026"
 PREFIXES_DEFAULT = "LCK, LPL, LEC, LCP"
 # International events: match by Tournaments.League (giá trị League THẬT trên Leaguepedia).
 EVENT_LEAGUES_DEFAULT = ("Mid-Season Invitational, World Championship, Esports World Cup, "
-                         "First Stand, Asian Games 2018, KeSPA, Esports Nations Cup, Demacia Cup")
+                         "First Stand, Asian Games 2018, KeSPA, Esports Nations Cup, Demacia Cup, "
+                         "Demacia Cup Global Invitational")
 
 # --- lolesports (future live overlay) -------------------------------------
 LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"

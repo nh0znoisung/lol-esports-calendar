@@ -41,7 +41,7 @@ LEAGUE_TIER = {
     "worldchampionship": "intl", "firststand": "intl",
     "esportsworldcup": "intl", "ewc": "intl", "nationscup": "intl",
     "esportsnationscup": "intl", "asiangames": "intl", "kespacup": "intl", "kespa": "intl",
-    "demaciacup": "intl",
+    "demaciacup": "intl", "demaciacupglobalinvitational": "intl",
 }
 TIER_COLOR = {
     "lck": "6",    # Tangerine
@@ -58,7 +58,7 @@ LEAGUE_SHORT = {
     "worldchampionship": "Worlds", "worlds": "Worlds", "esportsworldcup": "EWC",
     "firststand": "First Stand", "asiangames": "Asiad", "nationscup": "Nations Cup",
     "esportsnationscup": "Nations Cup", "kespacup": "KeSPA", "kespa": "KeSPA",
-    "demaciacup": "Demacia",
+    "demaciacup": "Demacia", "demaciacupglobalinvitational": "Demacia",
 }
 PLAYOFF_RE = re.compile(
     r"playoff|final|knockout|bracket|grand|tiebreak|seeding|seed|promotion|elimination|"
