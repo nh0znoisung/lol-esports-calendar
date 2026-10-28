@@ -184,6 +184,8 @@ def render(m):
     tag = ""
     if is_bracket(m.get("block") or ""):
         rs = round_short(m["block"])
+        if m.get("swiss"):
+            rs = f"{rs} ({m['swiss']})".strip()     # nhánh Swiss, vd "R4 (2-1)"
         tag = f"{rs}: " if rs else ""
     summary = f"{icon} [{ls}] {tag}{a['code']} {mid} {b['code']}"
 
@@ -191,6 +193,8 @@ def render(m):
     block = m.get("block") or ""
     head = " · ".join(x for x in [m["league"], block, bo] if x)
     lines = [head, f"{a['name']} vs {b['name']}", f"Giờ VN: {vn_str(m['utc'])}"]
+    if m.get("swiss"):
+        lines.insert(1, f"Nhánh Swiss: {m['swiss']}")
     if m.get("venue"):
         lines.append(f"Sân: {m['venue']}")
     if mid != "vs":

@@ -71,6 +71,8 @@ EVENT_LEAGUES_DEFAULT = ("Mid-Season Invitational, World Championship, Esports W
 # --- lolesports (future live overlay) -------------------------------------
 LOLESPORTS_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 SCHEDULE_URL = "https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US"
+# Giải có vòng Swiss (Worlds, MSI) -> lấy lịch riêng từng giải để tính nhánh (W-L).
+SWISS_LEAGUE_IDS = ("98767975604431411", "98767991325878492")
 
 
 def _dt(s):
@@ -309,6 +311,61 @@ def overlay_live(matches, live):
     return matches
 
 
+def _ls_keys(t):
+    return {_n(t.get("code", "")), _n(t.get("name", ""))} - {""}
+
+
+def fetch_swiss_records():
+    """Nhánh Swiss TRƯỚC mỗi trận (vd '2-1'), tính từ kết quả các trận Swiss trước đó
+    của cùng giải + cùng năm (lolesports blockName 'Swiss'). Trả list {utc, all, rec}."""
+    out = []
+    for lid in SWISS_LEAGUE_IDS:
+        try:
+            r = requests.get(SCHEDULE_URL + "&leagueId=" + lid, timeout=25,
+                             headers={"x-api-key": LOLESPORTS_KEY, **UA})
+            r.raise_for_status()
+            events = (r.json().get("data", {}).get("schedule", {}) or {}).get("events") or []
+        except Exception as e:  # noqa
+            print(f"WARN: swiss fetch failed ({lid}: {e})")
+            continue
+        sw = []
+        for ev in events:
+            tms = (ev.get("match") or {}).get("teams") or []
+            utc = _dt(ev.get("startTime"))
+            if ev.get("type") == "match" and "swiss" in (ev.get("blockName") or "").lower() \
+                    and len(tms) >= 2 and utc:
+                sw.append((utc, tms))
+        sw.sort(key=lambda x: x[0])
+        rec = {}                                   # (năm, team) -> [W, L]
+        for utc, tms in sw:
+            keys = [_ls_keys(t) for t in tms[:2]]
+            codes = [(utc.year, _n(t.get("code") or t.get("name") or "")) for t in tms[:2]]
+            if any(c[1] in ("", "tbd") for c in codes):
+                continue                           # chưa biết đội -> chưa biết nhánh
+            pre = [rec.get(c, [0, 0]) for c in codes]
+            ra, rb = (f"{w}-{l}" for w, l in pre)
+            if ra == rb:                           # lệch = thiếu lịch sử (API cắt trang) -> bỏ
+                out.append({"utc": utc, "all": keys[0] | keys[1], "rec": ra})
+            for c, t in zip(codes, tms[:2]):
+                o = (t.get("result") or {}).get("outcome")
+                if o in ("win", "loss"):
+                    w, l = rec.get(c, [0, 0])
+                    rec[c] = [w + (o == "win"), l + (o == "loss")]
+    print(f"swiss: {len(out)} matches with record")
+    return out
+
+
+def overlay_swiss(matches, swiss):
+    """Gắn m['swiss'] = nhánh W-L cho các trận Swiss khớp (theo đội + giờ ±2h)."""
+    for m in matches:
+        mk = {_n(m["a"]["code"]), _n(m["a"]["name"]), _n(m["b"]["code"]), _n(m["b"]["name"])} - {""}
+        for e in swiss:
+            if abs((e["utc"] - m["utc"]).total_seconds()) <= 2 * 3600 and (mk & e["all"]):
+                m["swiss"] = e["rec"]
+                break
+    return matches
+
+
 def fetch_all(**_):
     """Return (matches, ok). Lịch lấy từ cache (nếu có) hoặc Leaguepedia; live đè bằng lolesports."""
     matches = _load_cache()
@@ -323,6 +380,7 @@ def fetch_all(**_):
     # LIVE overlay (luôn chạy, nhẹ) — cho 🔴 + tỷ số ván thật của giải Riot mỗi 5 phút
     if matches:
         overlay_live(matches, fetch_lolesports_live())
+        overlay_swiss(matches, fetch_swiss_records())
     seen = {}
     for m in matches:
         if m["utc"]:
